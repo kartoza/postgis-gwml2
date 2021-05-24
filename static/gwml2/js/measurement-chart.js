@@ -8,6 +8,21 @@ const chartColors = [
     "rgb(201, 203, 207)"
 ]
 
+const linearTrendTitle = 'Linear Trend';
+let linearTrendIndex = 0;
+let currentTimeRange = 'yearly';
+
+Chart.plugins.register({
+   beforeDraw: function(c) {
+      var legends = c.legend.legendItems;
+      legends.forEach(function(e) {
+          if (e.text === linearTrendTitle) {
+              e.fillStyle = '#f39c12';
+          }
+      });
+   }
+});
+
 /** Return year and week of year from date
  */
 function getWeekNumber(d) {
@@ -224,7 +239,7 @@ function convertMeasurementData(
                 }
                 data['average'].push({
                     x: key,
-                    y: value['median'],
+                    y: value['average'],
                     unit: unit_to
                 })
 
@@ -245,12 +260,29 @@ function convertMeasurementData(
     }
 }
 
+function dateParser(mode) {
+    switch (mode) {
+        case 'yearly':
+            return 'YYYY'
+        case 'monthly':
+            return 'YYYY MMMM'
+        case 'weekly':
+            return 'YYYY Week WW'
+        case 'daily':
+            return 'YYYY-MM-DD'
+        default:
+            return ''
+    }
+}
+
 function renderMeasurementChart(identifier, chart, rawData, xLabel, yLabel) {
     let ctx = document.getElementById(`${identifier}-chart`).getContext("2d");
     let dataset = [];
     let idx = 0;
+    let _trendDataset = null;
+
     $.each(rawData.data, function (key, value) {
-        dataset.push({
+        const _dataset = {
             label: key,
             data: value,
             backgroundColor: chartColors[idx],
@@ -259,10 +291,37 @@ function renderMeasurementChart(identifier, chart, rawData, xLabel, yLabel) {
             fill: false,
             lineTension: 0,
             pointRadius: 1,
-            pointHoverRadius: 5,
-        })
-        idx += 1;
+            pointHoverRadius: 5
+        }
+
+        if (currentTimeRange === 'yearly' || currentTimeRange === 'monthly') {
+            if (key === 'average' || key === 'val') {
+                _trendDataset = Object.assign({}, _dataset);
+                _trendDataset['label'] = 'Linear Trend';
+                _trendDataset['data'] = value.map((data, index) => {
+                    return {'x': data.x, 'y': data.y}
+                });
+                _trendDataset['trendlineLinear'] = {
+                    style: '#f39c12',
+                    lineStyle: "line",
+                    width: 2
+                }
+                _trendDataset['borderColor'] = 'rgba(0, 0, 0, 0)'
+                _trendDataset['backgroundColor'] = 'rgba(0, 0, 0, 0)'
+                _trendDataset['hidden'] = true;
+            }
+            dataset.push(_dataset)
+            idx += 1;
+        }
     });
+
+    if (_trendDataset) {
+        dataset.push(_trendDataset);
+        linearTrendIndex = dataset.length - 1;
+    }
+
+    console.log(dataset);
+
     const options = {
         type: 'line',
         data: {
@@ -275,12 +334,23 @@ function renderMeasurementChart(identifier, chart, rawData, xLabel, yLabel) {
             scales: {
                 xAxes: [{
                     type: 'time',
+                    time: {
+                        unit: currentTimeRange !== 'daily' ? currentTimeRange.replace('ly', '') : 'day',
+                        parser: dateParser(currentTimeRange),
+                        displayFormats: {
+                            'day': 'YYYY-MM-DD',
+                            'year': 'YYYY',
+                            'month': 'YYYY MMMM',
+                            'week': 'YYYY [Week] WW'
+                        }
+                    },
                     scaleLabel: {
                         display: true,
                         labelString: xLabel
                     }
                 }],
                 yAxes: [{
+                    type: 'linear',
                     scaleLabel: {
                         display: true,
                         labelString: yLabel
@@ -292,6 +362,9 @@ function renderMeasurementChart(identifier, chart, rawData, xLabel, yLabel) {
                 intersect: false,
                 callbacks: {
                     label: function (tooltipItem, allData) {
+                        if (tooltipItem.datasetIndex === linearTrendIndex) {
+                            return false;
+                        }
                         let data = allData.datasets[tooltipItem.datasetIndex].data[tooltipItem.index];
                         let label = tooltipItem.yLabel + ' ' + data.unit;
                         if (data.methodology) {
@@ -306,22 +379,8 @@ function renderMeasurementChart(identifier, chart, rawData, xLabel, yLabel) {
 
     // show legend if data is more than 2 dataset
     // and show it as not time
-    if (Object.keys(rawData.data).length > 1) {
+    if (Object.keys(rawData.data).length > 0) {
         options.options.legend.display = true
-    }
-    // if there is label, xAxes turns to be string
-    if (rawData.labels.length > 0) {
-        options.options.scales.xAxes = [{
-            scaleLabel: {
-                display: true,
-                labelString: xLabel
-            },
-            ticks: {
-                maxTicksLimit: 20,
-                display: true,
-            },
-        }]
-        options.data.labels = rawData.labels;
     }
 
     if (!chart) {
@@ -398,6 +457,7 @@ let MeasurementChartObj = function (
                 this.ground_surface.u, this.unitTo, this.ground_surface.v
             )
         )
+        console.log(cleanData)
         this.chart = renderMeasurementChart(
             this.identifier, this.chart, cleanData, 'Time', this.parameterTo)
     }
@@ -448,6 +508,7 @@ let MeasurementChartObj = function (
         if (!timeRange) {
             timeRange = 'hourly'
         }
+        currentTimeRange = timeRange;
         if (unitTo !== this.unitTo || parameterTo !== this.parameterTo || timeRange !== this.timeRange) {
             this.unitTo = unitTo;
             this.parameterTo = parameterTo;
